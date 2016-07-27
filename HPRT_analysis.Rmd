@@ -1,0 +1,80 @@
+---
+title: "HPRT_ELDA_analysis"
+author: "KMWS"
+date: "July 26, 2016"
+output: html_document
+---
+This will transform and analyze my HPRT data, using ELDA
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(stringr)
+library(statmod)
+
+RawData <- read.csv("HPRT_rawresults_072516.csv")
+summary(RawData)
+```
+
+We should start by getting an idea for Plating Efficiency (PE) from the WEHI wells
+
+```{r}
+WEHIonly <- RawData %>% filter(Media == "WEHI")
+summary(WEHIonly)
+WEHIcomplete <- WEHIonly %>% filter(!is.na(WellsGrown))
+Wpercents <- WEHIcomplete %>% transform(GrowthPercent = WellsGrown / WellsPlated)
+hist(Wpercents$GrowthPercent)
+```
+
+Need to calculate Plating Efficiency and adjust WellsGrown accrodingly
+
+```{r}
+#Creating a line-media combination to group analysis
+GroupedData <- RawData %>% mutate(LineMedia = paste(LineID, Media))
+
+
+WehiPE <- GroupedData %>% filter(Media == "WEHI")
+WehiELDA <- elda(response = WehiPE$WellsGrown, dose = WehiPE$CellsPerWell, tested = WehiPE$WellsPlated, group = WehiPE$LineID, observed = FALSE, confidence = 0.95, test.unit.slope = TRUE)
+
+WehiELDAest <- as.data.frame(WehiELDA$CI)
+head(WehiELDA)
+WehiELDAest <- add_rownames(WehiELDAest, var = "LineID")
+WehiELDAest <- WehiELDAest %>% mutate(LineID = as.factor(LineID))
+#write.csv(WehiELDAest, "WehiELDAConfIntervals.csv")
+
+#Need to clean up the LineID field
+WehiELDAest <- WehiELDAest %>% mutate(LineID = as.character(LineID))
+WehiELDAest$LineID <- substr(WehiELDAest$LineID,7,nchar(WehiELDAest$LineID))
+
+#Extract the PE estimate
+PEonly <- WehiELDAest %>% select(LineID, Estimate)
+PEonly <- PEonly %>% rename(PlatingEff = Estimate)
+head(PEonly)
+
+#Merge with the 6-TG data
+TGonly <- GroupedData %>% filter(Media == "6-TG")
+TGPE <- merge(TGonly, PEonly, by="LineID")
+head(TGPE)
+
+PEadjusted <- TGPE %>% mutate(TrueCellsPerWell = CellsPerWell / PlatingEff)
+head(PEadjusted)
+```
+
+Calculate the ELDA
+
+```{r}
+MassELDA <- elda(response = PEadjusted$WellsGrown, dose = PEadjusted$TrueCellsPerWell, tested = PEadjusted$WellsPlated, group = PEadjusted$LineID, observed = FALSE, confidence = 0.95, test.unit.slope = TRUE)
+plot(MassELDA)
+ELDACI <- as.data.frame(MassELDA$CI)
+
+head(ELDACI)
+ELDACI <- add_rownames(ELDACI, var = "LineID")
+ELDACI <- ELDACI %>% mutate(LineID = as.character(LineID))
+#write.csv(MassELDA$CI, "ELDAConfIntervals.csv")
+
+
+
+```
+
